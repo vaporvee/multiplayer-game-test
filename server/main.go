@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -31,9 +32,9 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 		fmt.Println(err)
 		return
 	}
-	defer conn.Close()
+	defer conn.Close() // Closes the connection at the end
 
-	clients[conn] = true
+	clients[conn] = true // Add a new WebSocket connection to the clients map.
 
 	for {
 		_, msg, err := conn.ReadMessage()
@@ -41,7 +42,19 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 			delete(clients, conn)
 			break
 		}
-		broadcast <- msg
+
+		// Parse the received message as JSON
+		var payload map[string]interface{}
+		err = json.Unmarshal(msg, &payload)
+		if err != nil {
+			fmt.Println("Error parsing JSON:", err)
+			continue
+		}
+
+		// Check if the JSON object contains the key "type" with the value "broadcast"
+		if payload["type"] == "broadcast" {
+			broadcast <- msg // Send received WebSocket Message to Broadcast
+		}
 	}
 }
 
@@ -49,7 +62,8 @@ func handleMessages() {
 	for {
 		msg := <-broadcast
 		for client := range clients {
-			if err := client.WriteMessage(websocket.TextMessage, msg); err != nil {
+			err := client.WriteMessage(websocket.TextMessage, msg)
+			if err != nil {
 				client.Close()
 				delete(clients, client)
 			}
