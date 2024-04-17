@@ -14,3 +14,7 @@ config/name="Multiplayer Game Test"
 run/main_scene="res://scenes/ui/testinterface.tscn"
 config/features=PackedStringArray("4.2", "Forward Plus")
 config/icon="res://icon.svg"
+
+[autoload]
+
+UdpClient="*res://scripts/autoload/udp_client.gd"
