@@ -2,10 +2,11 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"net/http"
+	"os"
 
 	"github.com/gorilla/websocket"
+	"github.com/joho/godotenv"
 )
 
 var upgrader = websocket.Upgrader{
@@ -13,63 +14,45 @@ var upgrader = websocket.Upgrader{
 	WriteBufferSize: 1024,
 }
 
-// UserToken represents a user token in the database.
-type UserToken struct {
-	UserID string
-	Token  string
+var clients = make(map[*websocket.Conn]bool) // connected clients
+var broadcast = make(chan []byte)            // broadcast channel
+
+func main() {
+	godotenv.Load()
+	http.HandleFunc("/ws", handleConnections)
+	go handleMessages()
+	fmt.Println("Server running on " + os.Getenv("PORT"))
+	http.ListenAndServeTLS(os.Getenv("PORT"), "cert.pem", "key.pem", nil)
 }
 
-// userTokens is a simple in-memory map for demonstration purposes.
-var userTokens = make(map[string]UserToken)
-
-// generateItchOAuthURL generates an OAuth URL for itch.io.
-func generateItchOAuthURL(clientID string) string {
-	return fmt.Sprintf("https://itch.io/user/oauth?client_id=%s&response_type=token", clientID)
-}
-
-// redirectToItchOAuth sends the OAuth URL to the client.
-func redirectToItchOAuth(conn *websocket.Conn, clientID string) {
-	oauthURL := generateItchOAuthURL(clientID)
-	err := conn.WriteMessage(websocket.TextMessage, []byte(oauthURL))
-	if err != nil {
-		log.Println(err)
-	}
-}
-
-// saveUserToken saves the user token in the database.
-func saveUserToken(userID, token string) {
-	userTokens[userID] = UserToken{UserID: userID, Token: token}
-}
-
-// handler handles WebSocket connections.
-func handler(w http.ResponseWriter, r *http.Request) {
+func handleConnections(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Println(err)
+		fmt.Println(err)
 		return
 	}
 	defer conn.Close()
 
-	// Example client ID. Replace with your actual client ID.
-	clientID := "your_client_id_here"
+	clients[conn] = true
 
-	// Redirect the user to the OAuth URL.
-	redirectToItchOAuth(conn, clientID)
-
-	// Simulate receiving the token from the client.
-	// In a real application, you would parse the token from the redirect URL.
-	userID := "example_user_id"
-	token := "example_token"
-	saveUserToken(userID, token)
-
-	// Send a confirmation message to the client.
-	err = conn.WriteMessage(websocket.TextMessage, []byte("Token saved successfully."))
-	if err != nil {
-		log.Println(err)
+	for {
+		_, msg, err := conn.ReadMessage()
+		if err != nil {
+			delete(clients, conn)
+			break
+		}
+		broadcast <- msg
 	}
 }
 
-func main() {
-	http.HandleFunc("/ws", handler)
-	log.Fatal(http.ListenAndServe(":8080", nil))
+func handleMessages() {
+	for {
+		msg := <-broadcast
+		for client := range clients {
+			if err := client.WriteMessage(websocket.TextMessage, msg); err != nil {
+				client.Close()
+				delete(clients, client)
+			}
+		}
+	}
 }
